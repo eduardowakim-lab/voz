@@ -742,11 +742,13 @@
       analyserRemote.getByteTimeDomainData(dataRemote);
       levelRemote = computeRms(dataRemote);
     }
+ 
+    // Se você estiver falando -> mic manda
+// Se você NÃO estiver falando e o remoto passou do limiar -> remoto manda
+const remoteTalking = (!speaking && levelRemote >= REMOTE_ON);
+const useMic = !remoteTalking;
 
-    // escolhe fonte para animar boca:
-    // se detectou que você está falando (speaking=true) ou mic acima do limiar, usa mic
-    const useMic = speaking || (levelMic >= VOICE_ON * 0.75);
-    let level = (useMic ? levelMic : levelRemote) * SENS;
+let level = (useMic ? levelMic : levelRemote) * SENS;
 
     // smoothing
     smoothLevel = smoothLevel + (level - smoothLevel) * (1 - SMOOTH);
