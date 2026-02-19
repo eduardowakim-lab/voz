@@ -20,10 +20,9 @@
       --btn2:#2a8bff;
       --btnText:#07121c;
 
-      /* ✅ controle do layout no celular */
       --topPad: 10px;
       --sidePad: 12px;
-      --frameMaxH: 72vh; /* rosto ocupa até 72% da altura */
+      --frameMaxH: 72vh;
     }
 
     *{box-sizing:border-box}
@@ -32,27 +31,22 @@
     body{
       margin:0;
       min-height:100svh;
-
       display:grid;
       grid-template-rows: auto 1fr;
       align-items:start;
-
       padding:
         calc(env(safe-area-inset-top) + var(--topPad))
         calc(env(safe-area-inset-right) + var(--sidePad))
         calc(env(safe-area-inset-bottom) + 14px)
         calc(env(safe-area-inset-left) + var(--sidePad));
-
       background: radial-gradient(1200px 700px at 50% 35%, var(--bg1), var(--bg2));
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       color:#cfeaff;
       user-select:none;
       touch-action: manipulation;
-
       gap: 12px;
     }
 
-    /* ✅ wrap agora fica no topo e responsivo */
     .wrap{
       width: min(560px, 100%);
       height: min(var(--frameMaxH), 92vw);
@@ -246,7 +240,6 @@
       opacity: 0;
     }
 
-    /* Botão mic */
     .micBtn{
       position:absolute;
       inset:0;
@@ -259,11 +252,9 @@
       appearance:none;
       border:none;
       cursor:pointer;
-
       display:flex;
       align-items:center;
       gap: 12px;
-
       padding: 16px 18px;
       border-radius: 18px;
       font-weight: 800;
@@ -333,7 +324,6 @@
     }
     .pill strong{ color:#fff; font-weight:800; }
 
-    /* painel imagem */
     .robot-panel{
       width: 100%;
       justify-self: center;
@@ -353,7 +343,6 @@
       object-position: center;
     }
 
-    /* ✅ Botão discreto Fullscreen (canto superior direito) */
     .fs-btn{
       position: fixed;
       top: calc(env(safe-area-inset-top) + 8px);
@@ -399,7 +388,6 @@
 </head>
 <body>
 
-  <!-- ✅ Botão Fullscreen discreto -->
   <button class="fs-btn" id="fsBtn" type="button" aria-label="Tela cheia">
     <svg viewBox="0 0 24 24" fill="none">
       <path d="M8 3H5a2 2 0 0 0-2 2v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -409,7 +397,6 @@
     </svg>
   </button>
 
-  <!-- ROSTO -->
   <div class="wrap" id="app">
     <div class="face">
       <div class="meter"><div id="bar"></div></div>
@@ -463,27 +450,36 @@
     </div>
   </div>
 
-  <!-- IMAGEM ABAIXO -->
   <div class="robot-panel" aria-label="Imagem do robô">
     <img src="robo.jpg" alt="Robô" />
   </div>
 
-<audio id="remoteAudio" autoplay playsinline style="display:none"></audio>
+  <audio id="remoteAudio" autoplay playsinline style="display:none"></audio>
 
 <script>
-
 (() => {
   // ====== CONFIG ======
   const SESSION_ENDPOINT = "https://openai-realtime-proxy.eduardo-wakim.workers.dev/session";
-  const MODEL_MAX_OUTPUT_TOKENS = 256;   // ✅ custo mínimo (respostas curtas)
-  const VOICE_ON  = 0.030;               // sensibilidade: começa a falar
-  const VOICE_OFF = 0.020;               // sensibilidade: considera silêncio
-  const SILENCE_MS = 700;                // silêncio p/ fechar turno e pedir resposta
+  const MODEL_MAX_OUTPUT_TOKENS = 256;
 
-  let audioCtx, analyserRemote, dataRemote, stream;
+  const VOICE_ON  = 0.030;
+  const VOICE_OFF = 0.020;
+  const SILENCE_MS = 700;
+
+  // ✅ limiar do áudio remoto para considerar "robô falando"
+  const REMOTE_ON = 0.006; // ajuste fino: 0.004 a 0.012
+
+  let audioCtx, stream;
   let sendTrack = null;
   let micAnalyser, micData, micSource;
-  let pc = null, dc = null, remoteAudioSource = null;
+
+  // ✅ remoto analisado DIRETO do MediaStream do ontrack (mais robusto)
+  let remoteStream = null;
+  let remoteAnalyser = null, remoteData = null;
+  let remoteTap = null; // MediaStreamSource
+  let remoteGainSilent = null;
+
+  let pc = null, dc = null;
   let running = false;
 
   // Wake Lock
@@ -499,11 +495,11 @@
     }
   }
   async function releaseWakeLock(){
-    try{ await wakeLock?.release(); }catch(_ ){}
+    try{ await wakeLock?.release(); }catch(_){}
     wakeLock = null;
   }
 
-  // Fullscreen (botão discreto)
+  // Fullscreen
   const fsBtn = document.getElementById("fsBtn");
   function setFsUI(on){
     fsBtn.classList.toggle("on", !!on);
@@ -535,30 +531,30 @@
   window.addEventListener("beforeunload", releaseWakeLock);
 
   // DOM
-  const mouth = document.getElementById("mouth");
+  const mouth  = document.getElementById("mouth");
   const tongue = document.getElementById("tongue");
-  const teeth = document.getElementById("teeth");
-  const bar = document.getElementById("bar");
+  const teeth  = document.getElementById("teeth");
+  const bar    = document.getElementById("bar");
 
   const startBtn = document.getElementById("startBtn");
-  const micBtn = document.getElementById("micBtn");
+  const micBtn   = document.getElementById("micBtn");
   const btnTitle = document.getElementById("btnTitle");
-  const btnSub = document.getElementById("btnSub");
-  const hint = document.getElementById("hint");
+  const btnSub   = document.getElementById("btnSub");
+  const hint     = document.getElementById("hint");
   const pillText = document.getElementById("pillText");
   const remoteAudio = document.getElementById("remoteAudio");
 
-  // Mouth sensitivity
-  const SENS = 2.05;
-  const OPEN_MIN = 0.85;
-  const OPEN_MAX = 1.85;
-  const SMOOTH = 0.68;
+  // Boca (somente REMOTO)
+  const SENS = 2.15;      // um pouco mais forte pro remoto
+  const OPEN_MIN = 0.80;
+  const OPEN_MAX = 1.95;
+  const SMOOTH = 0.62;
   let smoothLevel = 0;
 
   const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
   function computeRms(u8){
     let sum=0;
-    for (let i=0;i<u8.length;i++) {
+    for (let i=0;i<u8.length;i++){
       const x = (u8[i]-128)/128;
       sum += x*x;
     }
@@ -584,29 +580,30 @@
   }
 
   function stopStream(){
-    try {
-      stream?.getTracks()?.forEach(t => t.stop());
-    } catch(_ ){}
+    try { stream?.getTracks()?.forEach(t => t.stop()); } catch(_){}
     stream = null;
-    try{ sendTrack?.stop(); }catch(_ ){}
+    try{ sendTrack?.stop(); }catch(_){}
     sendTrack = null;
   }
 
   function stopSession(){
-    try { dc?.close(); } catch(_ ){}
+    try { dc?.close(); } catch(_){}
     dc = null;
-    try { pc?.close(); } catch(_ ){}
+    try { pc?.close(); } catch(_){}
     pc = null;
 
     remoteAudio.srcObject = null;
-    remoteAudioSource = null;
+    remoteStream = null;
+
+    // limpa nodes remotos
+    try{ remoteTap?.disconnect(); }catch(_){}
+    try{ remoteAnalyser?.disconnect(); }catch(_){}
+    try{ remoteGainSilent?.disconnect(); }catch(_){}
+    remoteTap = null; remoteAnalyser = null; remoteGainSilent = null; remoteData = null;
 
     micSource = null;
     micAnalyser = null;
     micData = null;
-
-    analyserRemote = null;
-    dataRemote = null;
 
     stopStream();
     running = false;
@@ -625,35 +622,12 @@
   function ensureAudioCtx(){
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!audioCtx) audioCtx = new AC();
-    if (audioCtx.state === "suspended") {
-      // precisa de gesto do usuário (o click do botão conta)
-      audioCtx.resume().catch(()=>{});
-    }
+    if (audioCtx.state === "suspended") audioCtx.resume().catch(()=>{});
   }
-
-  
- function connectRemoteAnalyser(){
-  ensureAudioCtx();
-
-  if (!analyserRemote){
-    analyserRemote = audioCtx.createAnalyser();
-    analyserRemote.fftSize = 1024;
-    dataRemote = new Uint8Array(analyserRemote.fftSize);
-  }
-
-  if (!remoteAudioSource){
-    remoteAudioSource = audioCtx.createMediaElementSource(remoteAudio);
-    remoteAudioSource.connect(analyserRemote);
-    analyserRemote.connect(audioCtx.destination); // <-- MUITO IMPORTANTE
-  }
-
-  remoteAudio.play().catch(()=>{});
-}
-
 
   function setupMicAnalyser(){
     ensureAudioCtx();
-    if (!micAnalyser) {
+    if (!micAnalyser){
       micAnalyser = audioCtx.createAnalyser();
       micAnalyser.fftSize = 1024;
       micData = new Uint8Array(micAnalyser.fftSize);
@@ -662,56 +636,68 @@
     }
   }
 
-  // ====== AUTO VAD: sempre "ouvindo", mas só TRANSMITE quando você fala ======
+  // ✅ NOVO: analisa remoto direto do MediaStream (não do <audio>)
+  function setupRemoteAnalyserFromStream(ms){
+    ensureAudioCtx();
+
+    if (!remoteAnalyser){
+      remoteAnalyser = audioCtx.createAnalyser();
+      remoteAnalyser.fftSize = 1024;
+      remoteData = new Uint8Array(remoteAnalyser.fftSize);
+
+      remoteGainSilent = audioCtx.createGain();
+      remoteGainSilent.gain.value = 0; // não duplica som
+      remoteAnalyser.connect(remoteGainSilent);
+      remoteGainSilent.connect(audioCtx.destination);
+    }
+
+    // cria/atualiza o tap do stream
+    try{ remoteTap?.disconnect(); }catch(_){}
+    remoteTap = audioCtx.createMediaStreamSource(ms);
+    remoteTap.connect(remoteAnalyser);
+  }
+
+  // ====== AUTO VAD ======
   let speaking = false;
   let lastVoiceAt = 0;
 
   function vadLoop(){
-    if (!running || !micAnalyser || !micData || !stream) {
+    if (!running || !micAnalyser || !micData || !stream){
       requestAnimationFrame(vadLoop);
       return;
     }
 
     micAnalyser.getByteTimeDomainData(micData);
     const level = computeRms(micData);
-
     const t = sendTrack;
 
-    if (!speaking) {
-      // não falando
-      if (level >= VOICE_ON) {
+    if (!speaking){
+      if (level >= VOICE_ON){
         speaking = true;
         lastVoiceAt = performance.now();
-        if (t) t.enabled = true;  // ✅ começa a enviar áudio
-        // se estiver respondendo, corta pra você poder falar
+        if (t) t.enabled = true;
         sendEvent({ type: "response.cancel" });
-        // limpa buffer antes de um novo turno (mais robusto)
         sendEvent({ type: "input_audio_buffer.clear" });
       } else {
-        if (t) t.enabled = false; // ✅ não envia silêncio
+        if (t) t.enabled = false;
       }
     } else {
-      // falando
-      if (level >= VOICE_OFF) {
+      if (level >= VOICE_OFF){
         lastVoiceAt = performance.now();
       } else {
-        if (performance.now() - lastVoiceAt > SILENCE_MS) {
+        if (performance.now() - lastVoiceAt > SILENCE_MS){
           speaking = false;
           if (t) t.enabled = false;
 
-          // ✅ garante que o servidor feche o turno de áudio
           sendEvent({ type: "input_audio_buffer.commit" });
-
-          // ✅ pede resposta somente após você falar de verdade
           sendEvent({
-  type: "response.create",
-  response: {
-    instructions: "Responda exclusivamente em português do Brasil.",
-    output_modalities: ["audio"],
-    max_output_tokens: MODEL_MAX_OUTPUT_TOKENS
-  }
-});
-
+            type: "response.create",
+            response: {
+              instructions: "Responda exclusivamente em português do Brasil.",
+              output_modalities: ["audio"],
+              max_output_tokens: MODEL_MAX_OUTPUT_TOKENS
+            }
+          });
         }
       }
     }
@@ -719,45 +705,38 @@
     requestAnimationFrame(vadLoop);
   }
 
-  // ====== Mouth animation from REMOTE audio ======
-  
-  // ====== Animation: boca + barra ======
-  // - Enquanto VOCÊ fala: anima pela energia do microfone (pra ficar igual antes)
-  // - Enquanto o ROBÔ fala: anima pela energia do áudio remoto
-  // - Barra superior mostra o nível do microfone quando você fala; senão mostra o remoto
+  // ====== ANIMAÇÃO ======
+  // ✅ Barra = MIC
+  // ✅ Boca = REMOTO
   function loopAnim(){
     if (!running){
       requestAnimationFrame(loopAnim);
       return;
     }
 
+    // --- MIC -> barra ---
     let levelMic = 0;
-    let levelRemote = 0;
-
     if (micAnalyser && micData){
       micAnalyser.getByteTimeDomainData(micData);
       levelMic = computeRms(micData);
     }
-    if (analyserRemote && dataRemote){
-      analyserRemote.getByteTimeDomainData(dataRemote);
-      levelRemote = computeRms(dataRemote);
-    }
- 
-    // Se você estiver falando -> mic manda
-// Se você NÃO estiver falando e o remoto passou do limiar -> remoto manda
-const remoteTalking = (!speaking && levelRemote >= REMOTE_ON);
-const useMic = !remoteTalking;
+    const pct = clamp(levelMic * 140, 0, 100);
+    bar.style.width = pct + "%";
 
-let level = (useMic ? levelMic : levelRemote) * SENS;
+    // --- REMOTO -> boca ---
+    let levelRemote = 0;
+    if (remoteAnalyser && remoteData){
+      remoteAnalyser.getByteTimeDomainData(remoteData);
+      levelRemote = computeRms(remoteData);
+    }
+
+    // se não está falando, fecha a boca suavemente
+    const robotTalking = levelRemote >= REMOTE_ON;
+    const target = robotTalking ? (levelRemote * SENS) : 0;
 
     // smoothing
-    smoothLevel = smoothLevel + (level - smoothLevel) * (1 - SMOOTH);
-    level = smoothLevel;
-
-    // barra: mic quando falando, senão remoto
-    const barLevel = (useMic ? levelMic : levelRemote);
-    const pct = clamp(barLevel * 140, 0, 100);
-    bar.style.width = pct + "%";
+    smoothLevel = smoothLevel + (target - smoothLevel) * (1 - SMOOTH);
+    const level = smoothLevel;
 
     const open = clamp(OPEN_MIN + level * (OPEN_MAX - OPEN_MIN), OPEN_MIN, OPEN_MAX);
     const mouthH = clamp(52 + level * 95, 48, 140);
@@ -765,7 +744,7 @@ let level = (useMic ? levelMic : levelRemote) * SENS;
     mouth.style.height = mouthH + "%";
     mouth.style.transform = `scaleY(${open})`;
 
-    const teethOn = clamp((level - 0.04) * 8, 0, 1);
+    const teethOn = clamp((level - 0.03) * 9, 0, 1);
     teeth.style.opacity = teethOn.toFixed(2);
 
     const tOpacity = clamp(level * 2.2, 0, 1);
@@ -776,100 +755,84 @@ let level = (useMic ? levelMic : levelRemote) * SENS;
     requestAnimationFrame(loopAnim);
   }
 
-  // ====== Realtime connect via Worker (/session) ======
+  // ====== Realtime connect ======
   async function connectRealtime(){
     if (running) return;
-
     running = true;
     setButtonState("loading");
     requestWakeLock();
 
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
+    try{
+      if (!navigator.mediaDevices?.getUserMedia){
         throw new Error("getUserMedia não disponível neste navegador.");
       }
 
       ensureAudioCtx();
 
-      // microfone
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
+        audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
       });
 
-      // WebRTC
       pc = new RTCPeerConnection();
 
       // Recebe áudio do modelo
-      remoteAudio.srcObject = new MediaStream();
       pc.ontrack = (e) => {
-        const ms = remoteAudio.srcObject;
-        e.streams[0].getTracks().forEach(t => ms.addTrack(t));
-        connectRemoteAnalyser();
+        // ✅ usa o stream do próprio track
+        remoteStream = e.streams?.[0] || new MediaStream([e.track]);
+        remoteAudio.srcObject = remoteStream;
+
+        // ✅ garante play (alguns celulares precisam)
+        remoteAudio.play().catch(()=>{});
+
+        // ✅ analisador robusto do remoto
+        setupRemoteAnalyserFromStream(remoteStream);
       };
 
-      // Envia mic (clone) para economizar sem matar o analisador local:
-      // - o track ORIGINAL fica sempre ativo para a barra/boca reagirem à sua voz
-      // - o track CLONADO é o que vai para o WebRTC e a gente liga/desliga no VAD
+      // mic clone para enviar controlado pelo VAD
       const micTrack = stream.getAudioTracks()[0];
-      micTrack.enabled = true; // ✅ necessário para o analisador local funcionar
+      micTrack.enabled = true;
 
       sendTrack = micTrack.clone();
-      sendTrack.enabled = false; // ✅ começa sem transmitir (economia)
+      sendTrack.enabled = false;
 
       const sendStream = new MediaStream([sendTrack]);
       pc.addTrack(sendTrack, sendStream);
 
-      // DataChannel p/ eventos (response.create etc)
       dc = pc.createDataChannel("oai-events");
 
       dc.onopen = () => {
-  sendEvent({
-    type: "session.update",
-    session: {
-      type: "realtime",
-      model: "gpt-realtime-mini",
-
-      // ✅ força português + estilo
- instructions: `Responda sempre exclusivamente em português do Brasil.
+        sendEvent({
+          type: "session.update",
+          session: {
+            type: "realtime",
+            model: "gpt-realtime-mini",
+            instructions: `Responda sempre exclusivamente em português do Brasil.
 Nunca responda em inglês.
 Seja simpático, como um robô amigável para crianças.
 Respostas curtas e claras.`,
-
-
-      output_modalities: ["audio"],
-      audio: {
-        input: {
-          turn_detection: {
-            type: "semantic_vad",
-            create_response: false,
-            interrupt_response: true
+            output_modalities: ["audio"],
+            audio: {
+              input: {
+                turn_detection: {
+                  type: "semantic_vad",
+                  create_response: false,
+                  interrupt_response: true
+                }
+              },
+              output: { voice: "marin" }
+            }
           }
-        },
-        output: { voice: "marin" }
-      }
-    }
-  });
+        });
 
-  setButtonState("ok");
-  hint.style.display = "none";
-  setTimeout(() => { micBtn.style.display = "none"; }, 800);
+        setButtonState("ok");
+        hint.style.display = "none";
+        setTimeout(() => { micBtn.style.display = "none"; }, 800);
 
-  // start loops
-  setupMicAnalyser();
-  vadLoop();
-  loopAnim();
-};
-
-
-      dc.onmessage = (_e) => {
-        // se quiser debug: console.log("oai:", _e.data);
+        setupMicAnalyser();
+        vadLoop();
+        loopAnim();
       };
 
-      // SDP offer -> Worker -> SDP answer
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
@@ -879,15 +842,15 @@ Respostas curtas e claras.`,
         body: offer.sdp
       });
 
-      if (!resp.ok) {
+      if (!resp.ok){
         const err = await resp.text().catch(()=> "");
         throw new Error(`Worker/OpenAI erro ${resp.status}: ${err || resp.statusText}`);
       }
 
       const answerSdp = await resp.text();
-      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      await pc.setRemoteDescription({ type:"answer", sdp: answerSdp });
 
-    } catch (e) {
+    } catch(e){
       console.error(e);
       stopSession();
       setButtonState("idle");
@@ -900,15 +863,12 @@ Respostas curtas e claras.`,
 
   startBtn.addEventListener("click", connectRealtime);
 
-  // Ajusta textos iniciais
   setButtonState("idle");
   hint.style.display = "grid";
   pillText.innerHTML =
     "<strong>Dica:</strong> clique em <strong>Conectar voz</strong> e permita o microfone.<br/>" +
     "Depois disso ele fica ouvindo e responde só quando você falar.";
-
 })();
-
 </script>
 </body>
 </html>
