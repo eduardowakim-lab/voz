@@ -632,23 +632,24 @@
   }
 
   
-  function connectRemoteAnalyser(){
-    ensureAudioCtx();
-    if (!analyserRemote){
-      analyserRemote = audioCtx.createAnalyser();
-      analyserRemote.fftSize = 1024;
-      dataRemote = new Uint8Array(analyserRemote.fftSize);
-    }
-    if (!remoteAudioSource){
-      remoteAudioSource = audioCtx.createMediaElementSource(remoteAudio);
-      remoteAudioSource.connect(analyserRemote);
-      // toca no speaker
-      remoteAudioSource.connect(audioCtx.destination);
-    }
+ function connectRemoteAnalyser(){
+  ensureAudioCtx();
 
-    // alguns browsers travam autoplay; tenta dar play assim que chegar áudio remoto
-    remoteAudio.play().catch(()=>{});
+  if (!analyserRemote){
+    analyserRemote = audioCtx.createAnalyser();
+    analyserRemote.fftSize = 1024;
+    dataRemote = new Uint8Array(analyserRemote.fftSize);
   }
+
+  if (!remoteAudioSource){
+    remoteAudioSource = audioCtx.createMediaElementSource(remoteAudio);
+    remoteAudioSource.connect(analyserRemote);
+    analyserRemote.connect(audioCtx.destination); // <-- MUITO IMPORTANTE
+  }
+
+  remoteAudio.play().catch(()=>{});
+}
+
 
   function setupMicAnalyser(){
     ensureAudioCtx();
@@ -703,12 +704,14 @@
 
           // ✅ pede resposta somente após você falar de verdade
           sendEvent({
-            type: "response.create",
-            response: {
-              output_modalities: ["audio"],
-              max_output_tokens: MODEL_MAX_OUTPUT_TOKENS
-            }
-          });
+  type: "response.create",
+  response: {
+    instructions: "Responda exclusivamente em português do Brasil.",
+    output_modalities: ["audio"],
+    max_output_tokens: MODEL_MAX_OUTPUT_TOKENS
+  }
+});
+
         }
       }
     }
