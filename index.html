@@ -628,19 +628,23 @@
     }
   }
 
+  
   function connectRemoteAnalyser(){
     ensureAudioCtx();
-    if (!analyserRemote) {
+    if (!analyserRemote){
       analyserRemote = audioCtx.createAnalyser();
       analyserRemote.fftSize = 1024;
       dataRemote = new Uint8Array(analyserRemote.fftSize);
     }
-    if (!remoteAudioSource) {
+    if (!remoteAudioSource){
       remoteAudioSource = audioCtx.createMediaElementSource(remoteAudio);
       remoteAudioSource.connect(analyserRemote);
       // toca no speaker
       remoteAudioSource.connect(audioCtx.destination);
     }
+
+    // alguns browsers travam autoplay; tenta dar play assim que chegar áudio remoto
+    remoteAudio.play().catch(()=>{});
   }
 
   function setupMicAnalyser(){
@@ -677,6 +681,8 @@
         if (t) t.enabled = true;  // ✅ começa a enviar áudio
         // se estiver respondendo, corta pra você poder falar
         sendEvent({ type: "response.cancel" });
+        // limpa buffer antes de um novo turno (mais robusto)
+        sendEvent({ type: "input_audio_buffer.clear" });
       } else {
         if (t) t.enabled = false; // ✅ não envia silêncio
       }
@@ -688,6 +694,9 @@
         if (performance.now() - lastVoiceAt > SILENCE_MS) {
           speaking = false;
           if (t) t.enabled = false;
+
+          // ✅ garante que o servidor feche o turno de áudio
+          sendEvent({ type: "input_audio_buffer.commit" });
 
           // ✅ pede resposta somente após você falar de verdade
           sendEvent({
@@ -705,19 +714,41 @@
   }
 
   // ====== Mouth animation from REMOTE audio ======
-  function loopMouth(){
-    if (!running || !analyserRemote || !dataRemote) {
-      requestAnimationFrame(loopMouth);
+  
+  // ====== Animation: boca + barra ======
+  // - Enquanto VOCÊ fala: anima pela energia do microfone (pra ficar igual antes)
+  // - Enquanto o ROBÔ fala: anima pela energia do áudio remoto
+  // - Barra superior mostra o nível do microfone quando você fala; senão mostra o remoto
+  function loopAnim(){
+    if (!running){
+      requestAnimationFrame(loopAnim);
       return;
     }
 
-    analyserRemote.getByteTimeDomainData(dataRemote);
-    let level = computeRms(dataRemote) * SENS;
+    let levelMic = 0;
+    let levelRemote = 0;
 
+    if (micAnalyser && micData){
+      micAnalyser.getByteTimeDomainData(micData);
+      levelMic = computeRms(micData);
+    }
+    if (analyserRemote && dataRemote){
+      analyserRemote.getByteTimeDomainData(dataRemote);
+      levelRemote = computeRms(dataRemote);
+    }
+
+    // escolhe fonte para animar boca:
+    // se detectou que você está falando (speaking=true) ou mic acima do limiar, usa mic
+    const useMic = speaking || (levelMic >= VOICE_ON * 0.75);
+    let level = (useMic ? levelMic : levelRemote) * SENS;
+
+    // smoothing
     smoothLevel = smoothLevel + (level - smoothLevel) * (1 - SMOOTH);
     level = smoothLevel;
 
-    const pct = clamp(level * 120, 0, 100);
+    // barra: mic quando falando, senão remoto
+    const barLevel = (useMic ? levelMic : levelRemote);
+    const pct = clamp(barLevel * 140, 0, 100);
     bar.style.width = pct + "%";
 
     const open = clamp(OPEN_MIN + level * (OPEN_MAX - OPEN_MIN), OPEN_MIN, OPEN_MAX);
@@ -734,7 +765,7 @@
     tongue.style.opacity = tOpacity.toFixed(2);
     tongue.style.transform = `translateX(-50%) scale(${tScale})`;
 
-    requestAnimationFrame(loopMouth);
+    requestAnimationFrame(loopAnim);
   }
 
   // ====== Realtime connect via Worker (/session) ======
@@ -808,7 +839,7 @@
         // start loops
         setupMicAnalyser();
         vadLoop();
-        loopMouth();
+        loopAnim();
       };
 
       dc.onmessage = (_e) => {
