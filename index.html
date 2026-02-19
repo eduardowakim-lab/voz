@@ -481,6 +481,7 @@
   const SILENCE_MS = 700;                // silêncio p/ fechar turno e pedir resposta
 
   let audioCtx, analyserRemote, dataRemote, stream;
+  let sendTrack = null;
   let micAnalyser, micData, micSource;
   let pc = null, dc = null, remoteAudioSource = null;
   let running = false;
@@ -587,6 +588,8 @@
       stream?.getTracks()?.forEach(t => t.stop());
     } catch(_ ){}
     stream = null;
+    try{ sendTrack?.stop(); }catch(_ ){}
+    sendTrack = null;
   }
 
   function stopSession(){
@@ -671,7 +674,7 @@
     micAnalyser.getByteTimeDomainData(micData);
     const level = computeRms(micData);
 
-    const t = stream.getAudioTracks()[0];
+    const t = sendTrack;
 
     if (!speaking) {
       // não falando
@@ -803,10 +806,17 @@
         connectRemoteAnalyser();
       };
 
-      // Envia mic (mas começa DESABILITADO pra economizar até detectar fala)
+      // Envia mic (clone) para economizar sem matar o analisador local:
+      // - o track ORIGINAL fica sempre ativo para a barra/boca reagirem à sua voz
+      // - o track CLONADO é o que vai para o WebRTC e a gente liga/desliga no VAD
       const micTrack = stream.getAudioTracks()[0];
-      micTrack.enabled = false;
-      pc.addTrack(micTrack, stream);
+      micTrack.enabled = true; // ✅ necessário para o analisador local funcionar
+
+      sendTrack = micTrack.clone();
+      sendTrack.enabled = false; // ✅ começa sem transmitir (economia)
+
+      const sendStream = new MediaStream([sendTrack]);
+      pc.addTrack(sendTrack, sendStream);
 
       // DataChannel p/ eventos (response.create etc)
       dc = pc.createDataChannel("oai-events");
