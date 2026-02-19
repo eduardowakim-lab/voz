@@ -824,10 +824,17 @@
         // configuração de sessão: VAD do servidor ligado, mas sem resposta automática
         // (a gente cria manual quando detecta silêncio no VAD local)
         sendEvent({
-          type: "session.update",
-          session: {
-            type: "realtime",
-            model: "gpt-realtime-mini",
+         sendEvent({
+  type: "session.update",
+  session: {
+    type: "realtime",
+    model: "gpt-realtime-mini",
+
+    instructions: "Responda sempre em português do Brasil.
+Seja simpático, como um robô amigável para crianças.
+Respostas curtas e claras",
+ 
+
             output_modalities: ["audio"],
             audio: {
               input: {
