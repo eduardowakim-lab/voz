@@ -820,44 +820,43 @@
 
       // DataChannel p/ eventos (response.create etc)
       dc = pc.createDataChannel("oai-events");
+
       dc.onopen = () => {
-        // configuração de sessão: VAD do servidor ligado, mas sem resposta automática
-        // (a gente cria manual quando detecta silêncio no VAD local)
-        sendEvent({
-         sendEvent({
-  type: "session.update",
-  session: {
-    type: "realtime",
-    model: "gpt-realtime-mini",
+  sendEvent({
+    type: "session.update",
+    session: {
+      type: "realtime",
+      model: "gpt-realtime-mini",
 
-    instructions: "Responda sempre em português do Brasil.
+      // ✅ força português + estilo
+      instructions: `Responda sempre em português do Brasil.
 Seja simpático, como um robô amigável para crianças.
-Respostas curtas e claras",
- 
+Respostas curtas e claras.`,
 
-            output_modalities: ["audio"],
-            audio: {
-              input: {
-                turn_detection: {
-                  type: "semantic_vad",
-                  create_response: false,
-                  interrupt_response: true
-                }
-              },
-              output: { voice: "marin" }
-            }
+      output_modalities: ["audio"],
+      audio: {
+        input: {
+          turn_detection: {
+            type: "semantic_vad",
+            create_response: false,
+            interrupt_response: true
           }
-        });
+        },
+        output: { voice: "marin" }
+      }
+    }
+  });
 
-        setButtonState("ok");
-        hint.style.display = "none";
-        setTimeout(() => { micBtn.style.display = "none"; }, 800);
+  setButtonState("ok");
+  hint.style.display = "none";
+  setTimeout(() => { micBtn.style.display = "none"; }, 800);
 
-        // start loops
-        setupMicAnalyser();
-        vadLoop();
-        loopAnim();
-      };
+  // start loops
+  setupMicAnalyser();
+  vadLoop();
+  loopAnim();
+};
+
 
       dc.onmessage = (_e) => {
         // se quiser debug: console.log("oai:", _e.data);
